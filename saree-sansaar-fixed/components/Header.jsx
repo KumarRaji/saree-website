@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { NavLink, Link } from 'react-router-dom';
 import { MenuIcon } from './icons/MenuIcon';
 import { CloseIcon } from './icons/CloseIcon';
+import { isLoggedIn as authIsLoggedIn, clearToken, setToken } from "../src/utils/auth";
 
 /* ---------------- small helpers ---------------- */
 const NavItem = ({ to, children, onClick }) => (
@@ -20,7 +21,7 @@ const NavItem = ({ to, children, onClick }) => (
 );
 
 /* ---------------- Dropdown ---------------- */
-const Dropdown = ({ closeMobileMenu }) => {
+const Dropdown = ({ closeMobileMenu = () => {} }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [isHovering, setIsHovering] = useState(false);
   const dropdownRef = useRef(null);
@@ -134,6 +135,34 @@ function LoginModal({ onClose }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  // ---- NEW: local form state + call API and set token ----
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.message || "Login failed");
+      if (!data?.token) throw new Error("Token missing in response");
+      setToken(data.token);         // <-- updates auth state globally
+      onClose();                    // close modal
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return createPortal(
     <div
       className="fixed inset-0 z-[9999] bg-black/50 flex items-center justify-center p-4"
@@ -152,28 +181,36 @@ function LoginModal({ onClose }) {
           </button>
         </div>
 
-        <form className="px-6 py-5 space-y-4">
+        <form className="px-6 py-5 space-y-4" onSubmit={submit}>
           <div>
             <label className="block text-sm font-medium text-text-primary mb-1">Email</label>
             <input
               type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
               placeholder="Enter your email"
+              required
             />
           </div>
           <div>
             <label className="block text-sm font-medium text-text-primary mb-1">Password</label>
             <input
               type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
               placeholder="Enter your password"
+              required
             />
           </div>
+          {error && <p className="text-sm text-red-600">{error}</p>}
           <button
             type="submit"
-            className="w-full bg-primary text-white py-2.5 rounded-md font-medium hover:bg-primary-dark transition-colors duration-300"
+            className="w-full bg-primary text-white py-2.5 rounded-md font-medium hover:bg-primary-dark transition-colors duration-300 disabled:opacity-70"
+            disabled={loading}
           >
-            Sign In
+            {loading ? "Signing in..." : "Sign In"}
           </button>
         </form>
 
@@ -191,6 +228,18 @@ export default function Header() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showTooltip, setShowTooltip] = useState(false);
   const [showLoginForm, setShowLoginForm] = useState(false);
+  const [loggedIn, setLoggedIn] = useState(authIsLoggedIn()); // <-- track auth
+
+  useEffect(() => {
+    const onAuthChanged = () => setLoggedIn(authIsLoggedIn());
+    window.addEventListener("auth:changed", onAuthChanged);
+    return () => window.removeEventListener("auth:changed", onAuthChanged);
+  }, []);
+
+  const handleLogout = () => {
+    clearToken();
+    setLoggedIn(false);
+  };
 
   return (
     <header className="sticky top-0 bg-white/80 backdrop-blur-md shadow-sm z-50">
@@ -221,16 +270,25 @@ export default function Header() {
             <NavItem to="/women">Women</NavItem>
             <NavItem to="/men">Men</NavItem>
             <NavItem to="/new-arrivals">New Arrival</NavItem>
-            <Dropdown closeMobileMenu={() => {}} />
+            <Dropdown />
           </nav>
 
           <div className="flex items-center">
-            <button
-              onClick={() => setShowLoginForm(true)}
-              className="hidden lg:inline-block ml-8 bg-primary text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-primary-dark transition-colors duration-300"
-            >
-              Login
-            </button>
+            {loggedIn ? (
+              <button
+                onClick={handleLogout}
+                className="hidden lg:inline-block ml-8 bg-gray-800 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-gray-900 transition-colors duration-300"
+              >
+                Logout
+              </button>
+            ) : (
+              <button
+                onClick={() => setShowLoginForm(true)}
+                className="hidden lg:inline-block ml-8 bg-primary text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-primary-dark transition-colors duration-300"
+              >
+                Login
+              </button>
+            )}
 
             {/* Mobile menu button */}
             <div className="lg:hidden ml-4">
@@ -262,12 +320,21 @@ export default function Header() {
             <NavItem to="/men" onClick={() => setIsMobileMenuOpen(false)}>Men</NavItem>
             <NavItem to="/new-arrivals" onClick={() => setIsMobileMenuOpen(false)}>New Arrival</NavItem>
             <Dropdown closeMobileMenu={() => setIsMobileMenuOpen(false)} />
-            <button
-              onClick={() => setShowLoginForm(true)}
-              className="w-full mt-4 bg-primary text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-primary-dark transition-colors duration-300"
-            >
-              Login
-            </button>
+            {loggedIn ? (
+              <button
+                onClick={() => { handleLogout(); setIsMobileMenuOpen(false); }}
+                className="w-full mt-4 bg-gray-800 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-gray-900 transition-colors duration-300"
+              >
+                Logout
+              </button>
+            ) : (
+              <button
+                onClick={() => setShowLoginForm(true)}
+                className="w-full mt-4 bg-primary text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-primary-dark transition-colors duration-300"
+              >
+                Login
+              </button>
+            )}
           </nav>
         </div>
       </div>
